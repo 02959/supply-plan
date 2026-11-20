@@ -42,9 +42,10 @@ th{font-size:12px;color:var(--muted);font-weight:600;white-space:nowrap}
 tr:last-child td{border-bottom:none}
 td.num,th.num{text-align:right;white-space:nowrap}
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
-input[type=number]{width:76px;padding:5px 7px;border:1px solid var(--line);border-radius:8px;
-  font:inherit;font-size:14px;background:#fff;color:var(--ink)}
-input[type=number]:focus{outline:2px solid #c7d2fe;border-color:var(--c)}
+input[type=number],input[type=text]{padding:5px 7px;border:1px solid var(--line);border-radius:8px;
+  font:inherit;font-size:14px;background:#fff;color:var(--ink);width:100%}
+input[type=number]{width:76px}
+input[type=number]:focus,input[type=text]:focus{outline:2px solid #c7d2fe;border-color:var(--c)}
 select{padding:5px 7px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff}
 button{font:inherit;border-radius:9px;border:1px solid var(--line);background:#fff;
   color:var(--ink);padding:6px 12px;cursor:pointer}
@@ -121,6 +122,22 @@ details[open] summary:after{content:"▴"}
 
   <div class="card">
     <h2>📦 物品清单 <span class="sub" style="font-weight:400">（可直接改库存和月耗，下面全部实时重算）</span></h2>
+    <details style="margin-bottom:10px">
+      <summary class="sub">＋ 添加品类（存本机，可随导出带走；以后加商品不用改代码）</summary>
+      <div class="grid g3" style="margin-top:10px">
+        <input type="text" id="np-cat" placeholder="品类名，如 洗衣凝珠">
+        <input type="text" id="np-unit" placeholder="单位：抽 / ml / g / 张">
+        <input type="text" id="np-spec" placeholder="规格，如 3kg×2瓶">
+        <input type="number" id="np-total" placeholder="每件总量数字">
+        <input type="number" id="np-price" step="0.01" placeholder="单价 ¥">
+        <input type="number" id="np-stock" placeholder="当前库存">
+        <input type="number" id="np-rate" placeholder="月消耗">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="np-add">添加</button>
+        <span class="sub">最快/最慢按 ±15% 自动估</span>
+      </div>
+    </details>
     <div class="scroll">
       <table id="tbl">
         <thead><tr>
@@ -219,6 +236,26 @@ const LS_LOG = "supply_log_v1";
 let LOG = [];
 try { LOG = JSON.parse(localStorage.getItem(LS_LOG) || "[]"); } catch(e){ LOG = []; }
 function saveLog(){ try{ localStorage.setItem(LS_LOG, JSON.stringify(LOG)); }catch(e){} }
+
+/* 你自己加的品类：存本机，可随导出带走，不用改代码 */
+const LS_ITEMS = "supply_custom_items_v1";
+let CUSTOM = [];
+try { CUSTOM = JSON.parse(localStorage.getItem(LS_ITEMS) || "[]"); } catch(e){ CUSTOM = []; }
+function saveCustom(){ try{ localStorage.setItem(LS_ITEMS, JSON.stringify(CUSTOM)); }catch(e){} }
+function applyCustom(){
+  for (const it of CUSTOM){
+    if (!DATA.items.some(x => x.cat === it.cat)){
+      const o = Object.assign({}, it, { offers: (it.offers || []).slice(), hist: (it.hist || []).slice() });
+      const ov = OVR[o.cat];
+      if (ov){
+        if (typeof ov.stock === "number") o.stock = ov.stock;
+        if (typeof ov.rate === "number") o.rate = ov.rate;
+      }
+      DATA.items.push(o);
+    }
+  }
+}
+applyCustom();
 DATA.items.forEach(it => {
   const o = OVR[it.cat];
   if (!o) return;
@@ -546,6 +583,7 @@ document.addEventListener("click", e => {
   if (t.dataset.r){ ST.range = +t.dataset.r; render(); return; }
   if (t.dataset.checkin){ openCheckin(t.dataset.checkin); return; }
   if (t.id === "exp"){ exportJSON(); return; }
+  if (t.id === "np-add"){ addItem(); return; }
   if (t.id === "impbtn"){ document.getElementById("imp").click(); return; }
   if (t.id === "sh-ok"){ submitCheckin(); return; }
   if (t.id === "sh-cancel" || t.id === "sh-x"){ closeCheckin(); return; }
@@ -661,9 +699,32 @@ function renderLog(){
       ' 元/100' + esc(r.unit || "") + ')</span></span></div>').join("");
 }
 
+function addItem(){
+  const g = id => document.getElementById(id);
+  const cat = (g("np-cat").value || "").trim();
+  const unit = (g("np-unit").value || "").trim();
+  const spec = (g("np-spec").value || "").trim() || "1件";
+  const total = parseFloat(g("np-total").value);
+  const price = parseFloat(g("np-price").value);
+  const stock = parseFloat(g("np-stock").value) || 0;
+  const rate = parseFloat(g("np-rate").value) || 0;
+  if (!cat || !unit || !(total > 0) || !(price > 0)){ toast("品类、单位、每件总量、单价 都要填"); return; }
+  if (DATA.items.some(x => x.cat === cat)){ toast("已经有这个品类了"); return; }
+  const it = {
+    cat: cat, name: cat + " " + spec, unit: unit, stock: stock, rate: rate,
+    rateFast: rate * 1.15, rateSlow: rate * 0.85,
+    offers: [{ name: cat + " " + spec, spec: spec, total: total, unit: unit, price: price }],
+    hist: [], lastLow: null,
+  };
+  CUSTOM.push(it); saveCustom(); DATA.items.push(it);
+  ["np-cat","np-unit","np-spec","np-total","np-price","np-stock","np-rate"]
+    .forEach(k => { g(k).value = ""; });
+  render(); toast("已添加：" + cat);
+}
+
 function exportJSON(){
   const payload = { version: 1, exportedAt: iso(TODAY), dataDate: DATA.updated,
-                    overrides: OVR, extra: EXTRA, log: LOG };
+                    overrides: OVR, extra: EXTRA, log: LOG, custom: CUSTOM };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -696,7 +757,9 @@ function mergePayload(p){
   if (Array.isArray(p.log)) for (const r of p.log)
     if (!LOG.some(x => x.d === r.d && x.cat === r.cat && Math.abs(x.price - r.price) < 1e-9)) LOG.push(r);
   LOG.sort((a, b) => String(b.d).localeCompare(String(a.d)));
-  saveOvr(); saveExtra(); saveLog(); applyOverrides();
+  if (Array.isArray(p.custom)) for (const it of p.custom)
+    if (it && it.cat && !CUSTOM.some(x => x.cat === it.cat)) CUSTOM.push(it);
+  saveOvr(); saveExtra(); saveLog(); saveCustom(); applyOverrides(); applyCustom();
 }
 
 function importJSON(file){
@@ -747,6 +810,23 @@ render = function(){
 };
 render();
 loadCloud();
+
+/* 可选：同目录的 data.json 会覆盖内置数据。
+   好处是以后加商品只改 data.json（GitHub 网页上就能改），不用重新生成 HTML。 */
+try {
+  fetch("data.json", { cache: "no-store" })
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      if (!d || !Array.isArray(d.items) || !d.items.length) return;
+      DATA.items = d.items.map(x => Object.assign({ offers: [], hist: [] }, x));
+      if (d.settings) Object.assign(S, d.settings);
+      if (d.updated) DATA.updated = d.updated;
+      if (Array.isArray(d.milestones) && d.milestones.length) DATA.milestones = d.milestones;
+      applyOverrides(); applyCustom(); render();
+      toast("已载入 data.json（" + DATA.items.length + " 项）");
+    })
+    .catch(() => {});
+} catch (e) {}
 </script>
 </body>
 </html>
