@@ -18,13 +18,31 @@
   <nav class="nav"><a class="navbtn" href="index.html">📌 主页</a><a class="navbtn" href="plan.html">📅 全部计划</a><a class="navbtn" href="items.html">📦 物品清单</a><a class="navbtn on" href="price.html">📈 价格浮动</a><a class="navbtn" href="cost.html">💰 成本与打卡</a></nav>
   
   <div class="card">
+    <h2>📝 每日录价 <span class="sub" style="font-weight:400">填你看到的实付价，留空的跳过</span></h2>
+    <div class="row" style="margin-bottom:10px">
+      <span class="sub">日期</span>
+      <input type="date" id="pl-date" style="width:150px">
+      <span class="sub" id="pl-progress"></span>
+      <button id="pl-save" style="background:var(--c);color:#fff;border-color:var(--c)">保存</button>
+    </div>
+    <div class="scroll">
+      <table id="pl-tbl">
+        <thead><tr>
+          <th>品类</th><th>规格</th><th class="num">上次</th><th class="num">看到的实付价</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="sub" style="margin-top:8px">同一天同一规格再存会覆盖；换规格录也行，单位价会自己换算。</div>
+  </div>
+  <div class="card">
     <h2>📈 价格浮动</h2>
     <div class="row" style="margin-bottom:10px">
       <span class="sub">区间</span>
       <button data-r="7">7 天</button>
       <button data-r="30">30 天</button>
       <button data-r="90" class="on">90 天</button>
-      <span class="sub">虚线是大促日；点 ＋ 可补录一次价格</span>
+      <span class="sub">虚线是大促日</span>
     </div>
     <div class="grid g2" id="charts"></div>
   </div>

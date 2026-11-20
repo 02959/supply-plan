@@ -287,6 +287,65 @@
       .sort(function (a, b) { return String(a.d).localeCompare(String(b.d)); });
   }
 
+  /* 最近一次观测到的价格（含手录），没有就返回 null */
+  function lastObs(it) {
+    var all = priceSeries(it);
+    return all.length ? all[all.length - 1] : null;
+  }
+
+  /* ---------------- 每日录价 ---------------- */
+  function renderPriceEntry() {
+    var tb = document.querySelector("#pl-tbl tbody");
+    if (!tb) return;
+    var dateEl = document.getElementById("pl-date");
+    if (dateEl && !dateEl.value) dateEl.value = iso(TODAY);
+    var d = (dateEl && dateEl.value) || iso(TODAY);
+    var done = DATA.items.filter(function (it) {
+      return (EXTRA[it.cat] || []).some(function (x) { return x.d === d; });
+    }).length;
+    txt("pl-progress", "这一天已录 " + done + "/" + DATA.items.length + " 项");
+
+    tb.innerHTML = DATA.items.map(function (it, k) {
+      var lo = lastObs(it);
+      var opts = (it.offers || []).map(function (o, i) {
+        return '<option value="' + i + '">' + esc(o.spec) + "</option>";
+      }).join("");
+      return '<tr data-k="' + k + '">' +
+        "<td><b>" + esc(it.cat) + "</b></td>" +
+        '<td><select id="pl-spec-' + k + '">' + opts + "</select></td>" +
+        '<td class="num sub">' + (lo ? money(lo.raw) + "<br>" + md(lo.d) : "—") + "</td>" +
+        '<td class="num"><input type="number" step="0.01" min="0" id="pl-' + k +
+        '" placeholder="' + (lo ? lo.raw.toFixed(2) : "") + '"></td></tr>';
+    }).join("");
+  }
+
+  function savePriceEntry() {
+    var dateEl = document.getElementById("pl-date");
+    var d = (dateEl && dateEl.value) || iso(TODAY);
+    var n = 0;
+    DATA.items.forEach(function (it, k) {
+      var inp = document.getElementById("pl-" + k);
+      if (!inp) return;
+      var v = parseFloat(inp.value);
+      if (!v || v <= 0) return;
+      var sel = document.getElementById("pl-spec-" + k);
+      var idx = sel ? Math.max(0, Math.min((it.offers || []).length - 1, +sel.value)) : 0;
+      var o = (it.offers || [])[idx] || (it.offers || [])[0];
+      if (!o) return;
+      var per100 = +(v / o.total * 100).toFixed(4);
+      EXTRA[it.cat] = (EXTRA[it.cat] || []).filter(function (x) {
+        return !(x.d === d && x.spec === o.spec);
+      });
+      EXTRA[it.cat].push({ d: d, raw: v, total: o.total, spec: o.spec, per100: per100 });
+      inp.value = "";
+      n++;
+    });
+    if (!n) { toast("没填任何价格"); return; }
+    save(LS.extra, EXTRA);
+    renderAll();
+    toast("已录 " + n + " 条（" + d + "）");
+  }
+
   function sparkline(ser) {
     var W = 300, H = 92, P = 8;
     var from = addD(TODAY, -ST.range);
@@ -337,7 +396,8 @@
 
   function chartCard(it) {
     var best = it.best;
-    var per100Now = best ? best.price / best.total * 100 : null;
+    var obs = lastObs(it);
+    var per100Now = obs ? obs.per100 : (best ? best.price / best.total * 100 : null);
     var ser = priceSeries(it);
     var inRange = ser.filter(function (x) { return parseD(x.d) >= addD(TODAY, -ST.range); });
     var low = inRange.length ? Math.min.apply(null, inRange.map(function (x) { return x.per100; })) : null;
@@ -363,7 +423,7 @@
     return '<div style="border:1px solid var(--line);border-radius:12px;padding:12px">' +
       '<div class="row" style="justify-content:space-between"><b>' + esc(it.cat) + "</b>" +
       '<span class="chip">' + (per100Now != null ? per100Now.toFixed(3) : "—") +
-      " 元/100" + esc(it.unit) + "</span></div>" +
+      " 元/100" + esc(it.unit) + (obs ? " · " + md(obs.d) : "") + "</span></div>" +
       sparkline(ser) +
       '<div class="sub" style="margin-top:6px">' +
       (low != null ? "近 " + ST.range + " 天：低 " + low.toFixed(3) + " / 高 " + high.toFixed(3) : "") +
@@ -426,7 +486,7 @@
     if (PAGE === "index") { renderAlerts(items); renderNext(orders); renderFoot(); }
     if (PAGE === "plan") { renderOrders(orders); }
     if (PAGE === "items") { renderItems(items); }
-    if (PAGE === "price") { renderCharts(items); }
+    if (PAGE === "price") { renderPriceEntry(); renderCharts(items); }
     if (PAGE === "cost") { renderCost(items, orders); renderLog(); renderFoot(); }
   }
 
@@ -596,6 +656,7 @@
     }
     if (t.id === "safety") { ST.safety = +t.value; renderAll(); }
     if (t.id === "merge") { ST.merge = +t.value; renderAll(); }
+    if (t.id === "pl-date") { renderPriceEntry(); }
   });
 
   document.addEventListener("input", function (e) {
@@ -608,6 +669,7 @@
     if (!t) return;
     if (t.dataset.r) { ST.range = +t.dataset.r; renderAll(); paintRange(); return; }
     if (t.dataset.checkin) { openCheckin(t.dataset.checkin); return; }
+    if (t.id === "pl-save") { savePriceEntry(); return; }
     if (t.id === "exp") { exportJSON(); return; }
     if (t.id === "impbtn") { document.getElementById("imp").click(); return; }
     if (t.id === "np-add") { addItem(); return; }
