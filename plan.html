@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>全部采购计划 · 宿舍补给计划</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="plan">
+<div class="wrap">
+  <div class="row" style="justify-content:space-between;align-items:flex-end">
+    <div>
+      <h1>全部采购计划</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <div class="row" id="head-chips"></div>
+  </div>
+  <nav class="nav"><a class="navbtn" href="index.html">📌 主页</a><a class="navbtn on" href="plan.html">📅 全部计划</a><a class="navbtn" href="items.html">📦 物品清单</a><a class="navbtn" href="price.html">📈 价格浮动</a><a class="navbtn" href="cost.html">💰 成本与打卡</a></nav>
+  
+  <div class="card">
+    <h2>📅 全部采购计划</h2>
+    <div id="orders"></div>
+    <div class="row" style="margin-top:14px">
+      <span class="sub">安全库存</span>
+      <select id="safety">
+        <option value="3">3 天</option><option value="7">7 天</option>
+        <option value="14">14 天</option><option value="21">21 天</option>
+      </select>
+      <span class="sub">合并窗口</span>
+      <select id="merge">
+        <option value="0">不合</option><option value="5">5 天</option>
+        <option value="10">10 天</option><option value="20">20 天</option>
+      </select>
+      <button class="ghost" id="reset">恢复默认</button>
+    </div>
+    <div class="sub" style="margin-top:8px">调这两个值能看不同策略下的区别：安全库存越大越早买，合并窗口越大越少下单但每次买得多。</div>
+  </div>
+
+</div>
+<div class="toast" id="toast"></div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

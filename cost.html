@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>成本与打卡 · 宿舍补给计划</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="cost">
+<div class="wrap">
+  <div class="row" style="justify-content:space-between;align-items:flex-end">
+    <div>
+      <h1>成本与打卡</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <div class="row" id="head-chips"></div>
+  </div>
+  <nav class="nav"><a class="navbtn" href="index.html">📌 主页</a><a class="navbtn" href="plan.html">📅 全部计划</a><a class="navbtn" href="items.html">📦 物品清单</a><a class="navbtn" href="price.html">📈 价格浮动</a><a class="navbtn on" href="cost.html">💰 成本与打卡</a></nav>
+  
+  <div class="card">
+    <h2>💰 成本概览</h2>
+    <div class="grid g3" id="cost"></div>
+  </div>
+  <div class="card">
+    <h2>🧾 打卡与数据</h2>
+    <div class="row">
+      <button id="exp">导出数据（cloud.json）</button>
+      <button id="impbtn">导入数据</button>
+      <input type="file" id="imp" accept="application/json,.json" hidden>
+      <span class="sub">导出后可放进仓库，其他设备用「导入数据」合并</span>
+    </div>
+    <div id="loglist" style="margin-top:10px"></div>
+  </div>
+  <div class="card foot" id="foot"></div>
+
+</div>
+<div class="toast" id="toast"></div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

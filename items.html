@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>物品清单 · 宿舍补给计划</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="items">
+<div class="wrap">
+  <div class="row" style="justify-content:space-between;align-items:flex-end">
+    <div>
+      <h1>物品清单</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <div class="row" id="head-chips"></div>
+  </div>
+  <nav class="nav"><a class="navbtn" href="index.html">📌 主页</a><a class="navbtn" href="plan.html">📅 全部计划</a><a class="navbtn on" href="items.html">📦 物品清单</a><a class="navbtn" href="price.html">📈 价格浮动</a><a class="navbtn" href="cost.html">💰 成本与打卡</a></nav>
+  
+  <div class="card">
+    <h2>📦 物品清单 <span class="sub" style="font-weight:400">（改库存和月耗，全站实时重算）</span></h2>
+    <details style="margin-bottom:10px">
+      <summary class="sub">＋ 添加品类（存本机，可随导出带走；加商品不用改代码）</summary>
+      <div class="grid g3" style="margin-top:10px">
+        <input type="text" id="np-cat" placeholder="品类名，如 洗衣凝珠">
+        <input type="text" id="np-unit" placeholder="单位：抽 / ml / g / 张">
+        <input type="text" id="np-spec" placeholder="规格，如 3kg×2瓶">
+        <input type="number" id="np-total" placeholder="每件总量数字">
+        <input type="number" id="np-price" step="0.01" placeholder="单价 ¥">
+        <input type="number" id="np-stock" placeholder="当前库存">
+        <input type="number" id="np-rate" placeholder="月消耗">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="np-add">添加</button>
+        <span class="sub">最快/最慢按 ±15% 自动估</span>
+      </div>
+    </details>
+    <div class="scroll">
+      <table id="tbl">
+        <thead><tr>
+          <th>品类</th><th class="num">余量</th><th class="num">月耗</th>
+          <th class="num">预计用完</th><th>最快~最慢</th><th class="num">单位价</th>
+          <th>最优规格</th><th class="num">够用</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-box">
+    <div class="row" style="justify-content:space-between">
+      <b id="sh-title">打卡</b>
+      <button class="ghost" id="sh-x" style="padding:2px 9px">✕</button>
+    </div>
+    <div class="sub" id="sh-sub" style="margin-top:4px"></div>
+    <div class="row" style="margin-top:12px">
+      <label class="sub" style="width:34px">件数</label>
+      <input type="number" id="sh-qty" value="1" min="1" step="1" style="width:74px">
+      <label class="sub">实付总价</label>
+      <input type="number" id="sh-price" step="0.01" min="0" style="width:104px">
+    </div>
+    <div class="sub" id="sh-calc" style="margin-top:9px"></div>
+    <div class="row" style="margin-top:14px">
+      <button id="sh-ok" style="background:var(--c);color:#fff;border-color:var(--c)">记录这次购买</button>
+      <button class="ghost" id="sh-cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+</div>
+<div class="toast" id="toast"></div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
