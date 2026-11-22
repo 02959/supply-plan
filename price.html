@@ -18,7 +18,7 @@
   <nav class="nav"><a class="navbtn" href="index.html">📌 主页</a><a class="navbtn" href="plan.html">📅 全部计划</a><a class="navbtn" href="items.html">📦 物品清单</a><a class="navbtn on" href="price.html">📈 价格浮动</a><a class="navbtn" href="cost.html">💰 成本与打卡</a></nav>
   
   <div class="card">
-    <h2>📝 每日录价 <span class="sub" style="font-weight:400">填你看到的实付价，留空的跳过</span></h2>
+    <h2>📝 每日录价 <span class="sub" style="font-weight:400">每个规格一行，留空的跳过</span></h2>
     <div class="row" style="margin-bottom:10px">
       <span class="sub">日期</span>
       <input type="date" id="pl-date" style="width:150px">
@@ -33,7 +33,9 @@
         <tbody></tbody>
       </table>
     </div>
-    <div class="sub" style="margin-top:8px">同一天同一规格再存会覆盖；换规格录也行，单位价会自己换算。</div>
+    <div class="sub" style="margin-top:8px">
+      每个规格单独记一条历史，互不干扰。品类后面的 ＋ 可以加新规格（比如 8 包装）；同一天同一规格再存会覆盖。
+    </div>
   </div>
   <div class="card">
     <h2>📈 价格浮动</h2>

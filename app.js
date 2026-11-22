@@ -282,79 +282,169 @@
     }).join("");
   }
 
-  function priceSeries(it) {
-    return (it.hist || []).concat(EXTRA[it.cat] || [])
-      .sort(function (a, b) { return String(a.d).localeCompare(String(b.d)); });
+  /* ---------------- 价格模型：按「品类 + 规格」分开存 ----------------
+     EXTRA[品类][specKey] = [{d, raw, total, per100}]
+     每个规格一条独立历史，互不干扰。 */
+  var LS_SPECS = "supply_extra_specs_v1";
+  var SPECS = load(LS_SPECS, {});   /* {品类: [{spec,total,unit}]} 手动添加的规格 */
+
+  function specKey(spec, total) {
+    var t = Number(total) || 0;
+    return (spec || "未命名") + "@" + (Math.round(t * 1000) / 1000);
   }
 
-  /* 最近一次观测到的价格（含手录），没有就返回 null */
-  function lastObs(it) {
-    var all = priceSeries(it);
-    return all.length ? all[all.length - 1] : null;
+  /* 老格式（品类下的扁平数组）自动迁移成按规格分组 */
+  (function migrateExtra() {
+    var changed = false;
+    Object.keys(EXTRA).forEach(function (cat) {
+      if (!Array.isArray(EXTRA[cat])) return;
+      var map = {};
+      EXTRA[cat].forEach(function (x) {
+        var k = specKey(x.spec, x.total);
+        (map[k] = map[k] || []).push({
+          d: x.d, raw: x.raw, total: x.total,
+          per100: x.per100 || (x.raw / x.total * 100)
+        });
+      });
+      EXTRA[cat] = map;
+      changed = true;
+    });
+    if (changed) save(LS.extra, EXTRA);
+  })();
+
+  /* 该品类下出现过的所有规格：data.js 的 offers + 手动加的 + 录过价的 */
+  function allSpecs(it) {
+    var out = [], seen = {};
+    (it.offers || []).forEach(function (o) {
+      var k = specKey(o.spec, o.total);
+      if (seen[k]) return;
+      seen[k] = 1;
+      out.push({ spec: o.spec, total: o.total, unit: o.unit || it.unit, k: k, price: o.price });
+    });
+    (SPECS[it.cat] || []).forEach(function (s) {
+      var k = specKey(s.spec, s.total);
+      if (seen[k]) return;
+      seen[k] = 1;
+      out.push({ spec: s.spec, total: s.total, unit: s.unit || it.unit, k: k, price: null });
+    });
+    var map = EXTRA[it.cat] || {};
+    Object.keys(map).forEach(function (k) {
+      if (seen[k]) return;
+      seen[k] = 1;
+      var pts = map[k] || [];
+      out.push({
+        spec: k.split("@")[0], total: pts.length ? pts[0].total : 0,
+        unit: it.unit, k: k, price: null
+      });
+    });
+    return out;
   }
 
-  /* ---------------- 每日录价 ---------------- */
+  /* 某规格的完整价格历史（成交记录 + 手录） */
+  function specPoints(it, s) {
+    var pts = [];
+    (it.hist || []).forEach(function (h) {
+      if (s.total && Math.abs(h.total - s.total) < 1e-6) pts.push(h);
+    });
+    ((EXTRA[it.cat] || {})[s.k] || []).forEach(function (x) { pts.push(x); });
+    pts.sort(function (a, b) { return String(a.d).localeCompare(String(b.d)); });
+    return pts;
+  }
+
+  /* 单个规格的价格判断 */
+  function specVerdict(pts, rangeDays) {
+    var from = addD(TODAY, -rangeDays);
+    var inR = pts.filter(function (p) { return parseD(p.d) >= from; });
+    if (!inR.length) return { cls: "", text: "还没价格记录" };
+    if (inR.length < 2) return { cls: "", text: "只 1 次，再录几次" };
+    var low = Math.min.apply(null, inR.map(function (p) { return p.per100; }));
+    var high = Math.max.apply(null, inR.map(function (p) { return p.per100; }));
+    var last = inR[inR.length - 1];
+    var gap = (last.per100 - low) / (high || 1) * 100;
+    return {
+      cls: gap < 3 ? "ok" : (gap < 12 ? "warn" : "bad"),
+      text: gap < 3 ? "近期低位" : (gap < 12 ? "中等位" : "偏高"),
+      low: low, high: high, last: last
+    };
+  }
+
+  /* ---------------- 每日录价：每个规格一行 ---------------- */
   function renderPriceEntry() {
     var tb = document.querySelector("#pl-tbl tbody");
     if (!tb) return;
     var dateEl = document.getElementById("pl-date");
     if (dateEl && !dateEl.value) dateEl.value = iso(TODAY);
     var d = (dateEl && dateEl.value) || iso(TODAY);
-    var done = DATA.items.filter(function (it) {
-      return (EXTRA[it.cat] || []).some(function (x) { return x.d === d; });
-    }).length;
-    txt("pl-progress", "这一天已录 " + done + "/" + DATA.items.length + " 项");
 
-    tb.innerHTML = DATA.items.map(function (it, k) {
-      var lo = lastObs(it);
-      var opts = (it.offers || []).map(function (o, i) {
-        return '<option value="' + i + '">' + esc(o.spec) + "</option>";
-      }).join("");
-      return '<tr data-k="' + k + '">' +
-        "<td><b>" + esc(it.cat) + "</b></td>" +
-        '<td><select id="pl-spec-' + k + '">' + opts + "</select></td>" +
-        '<td class="num sub">' + (lo ? money(lo.raw) + "<br>" + md(lo.d) : "—") + "</td>" +
-        '<td class="num"><input type="number" step="0.01" min="0" id="pl-' + k +
-        '" placeholder="' + (lo ? lo.raw.toFixed(2) : "") + '"></td></tr>';
-    }).join("");
+    var html = [], done = 0, total = 0;
+    DATA.items.forEach(function (it, ci) {
+      allSpecs(it).forEach(function (s, si) {
+        total++;
+        var pts = specPoints(it, s);
+        var todayPts = (EXTRA[it.cat] || {})[s.k] || [];
+        if (todayPts.some(function (x) { return x.d === d; })) done++;
+        var last = pts.length ? pts[pts.length - 1] : null;
+        html.push('<tr>' +
+          "<td>" + (si === 0 ? "<b>" + esc(it.cat) + "</b> " +
+            '<button class="ghost" data-newspec="' + esc(it.cat) + '" title="加一个规格">＋</button>' : "") + "</td>" +
+          '<td class="sub">' + esc(s.spec) +
+            (s.total ? "<br>" + s.total + esc(s.unit || it.unit) : "") + "</td>" +
+          '<td class="num sub">' + (last ? money(last.raw) + "<br>" + md(last.d) : "—") + "</td>" +
+          '<td class="num"><input type="number" step="0.01" min="0" id="pl-' + ci + "-" + si +
+          '" placeholder="' + (last ? last.raw.toFixed(2) : "") + '"></td></tr>');
+      });
+    });
+    tb.innerHTML = html.join("");
+    txt("pl-progress", "这一天已录 " + done + "/" + total + " 个规格");
   }
 
   function savePriceEntry() {
     var dateEl = document.getElementById("pl-date");
     var d = (dateEl && dateEl.value) || iso(TODAY);
     var n = 0;
-    DATA.items.forEach(function (it, k) {
-      var inp = document.getElementById("pl-" + k);
-      if (!inp) return;
-      var v = parseFloat(inp.value);
-      if (!v || v <= 0) return;
-      var sel = document.getElementById("pl-spec-" + k);
-      var idx = sel ? Math.max(0, Math.min((it.offers || []).length - 1, +sel.value)) : 0;
-      var o = (it.offers || [])[idx] || (it.offers || [])[0];
-      if (!o) return;
-      var per100 = +(v / o.total * 100).toFixed(4);
-      EXTRA[it.cat] = (EXTRA[it.cat] || []).filter(function (x) {
-        return !(x.d === d && x.spec === o.spec);
+    DATA.items.forEach(function (it, ci) {
+      allSpecs(it).forEach(function (s, si) {
+        var inp = document.getElementById("pl-" + ci + "-" + si);
+        if (!inp) return;
+        var v = parseFloat(inp.value);
+        if (!v || v <= 0) return;
+        var per100 = +(v / s.total * 100).toFixed(4);
+        EXTRA[it.cat] = EXTRA[it.cat] || {};
+        var arr = (EXTRA[it.cat][s.k] || []).filter(function (x) { return x.d !== d; });
+        arr.push({ d: d, raw: v, total: s.total, per100: per100 });
+        EXTRA[it.cat][s.k] = arr;
+        inp.value = "";
+        n++;
       });
-      EXTRA[it.cat].push({ d: d, raw: v, total: o.total, spec: o.spec, per100: per100 });
-      inp.value = "";
-      n++;
     });
     if (!n) { toast("没填任何价格"); return; }
     save(LS.extra, EXTRA);
     renderAll();
-    toast("已录 " + n + " 条（" + d + "）");
+    toast("已录 " + n + " 个规格（" + d + "）");
   }
 
-  function sparkline(ser) {
-    var W = 300, H = 92, P = 8;
+  function specColor(i) {
+    return ["#4f46e5", "#059669", "#d97706", "#dc2626", "#7c3aed"][i % 5];
+  }
+
+  /* 多规格同图：每个规格一条线，颜色区分 */
+  function multiChart(it, specsArr) {
+    var W = 300, H = 96, P = 8;
     var from = addD(TODAY, -ST.range);
-    var pts = ser.filter(function (x) { return parseD(x.d) >= from; });
-    if (!pts.length)
+    var series = specsArr.map(function (s, i) {
+      return {
+        s: s, color: specColor(i),
+        pts: specPoints(it, s).filter(function (p) { return parseD(p.d) >= from; })
+      };
+    });
+    var all = [];
+    series.forEach(function (x) { x.pts.forEach(function (p) { all.push(p); }); });
+    if (!all.length)
       return '<div class="sub" style="height:' + H + 'px;display:flex;align-items:center;' +
              'justify-content:center">近 ' + ST.range + " 天没有价格记录</div>";
-    var xs = pts.map(function (p) { return parseD(p.d).getTime(); });
-    var ys = pts.map(function (p) { return p.per100; });
+
+    var xs = all.map(function (p) { return parseD(p.d).getTime(); });
+    var ys = all.map(function (p) { return p.per100; });
     var x0 = Math.min.apply(null, xs.concat([from.getTime()]));
     var x1 = Math.max.apply(null, xs.concat([TODAY.getTime()]));
     var ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys);
@@ -362,6 +452,7 @@
     var ly = ymin - padY, hy = ymax + padY;
     function X(t) { return P + (t - x0) / Math.max(1, x1 - x0) * (W - 2 * P); }
     function Y(v) { return H - P - (v - ly) / Math.max(1e-9, hy - ly) * (H - 2 * P); }
+
     var g = "";
     DATA.milestones.forEach(function (m) {
       var d = parseD(m.d);
@@ -372,65 +463,67 @@
            '<text x="' + mx + '" y="' + (P + 8) + '" font-size="8" fill="#6366f1" ' +
            'text-anchor="middle">' + m.name + "</text>";
     });
-    if (pts.length > 1) {
-      var d0 = pts.map(function (p, i) {
-        return (i ? "L" : "M") + X(parseD(p.d).getTime()).toFixed(1) + " " + Y(p.per100).toFixed(1);
-      }).join(" ");
-      g += '<path d="' + d0 + '" fill="none" stroke="#4f46e5" stroke-width="2" ' +
-           'stroke-linejoin="round"/>';
-      g += '<path d="' + d0 + " L" + X(parseD(pts[pts.length - 1].d).getTime()).toFixed(1) + " " + (H - P) +
-           " L" + X(parseD(pts[0].d).getTime()).toFixed(1) + " " + (H - P) +
-           ' Z" fill="#eef2ff" opacity=".7"/>';
-    }
-    pts.forEach(function (p) {
-      g += '<circle cx="' + X(parseD(p.d).getTime()).toFixed(1) + '" cy="' +
-           Y(p.per100).toFixed(1) + '" r="3" fill="#4f46e5"/>';
+    series.forEach(function (x) {
+      if (!x.pts.length) return;
+      if (x.pts.length > 1) {
+        var dstr = x.pts.map(function (p, i) {
+          return (i ? "L" : "M") + X(parseD(p.d).getTime()).toFixed(1) + " " + Y(p.per100).toFixed(1);
+        }).join(" ");
+        g += '<path d="' + dstr + '" fill="none" stroke="' + x.color +
+             '" stroke-width="2" stroke-linejoin="round"/>';
+      }
+      x.pts.forEach(function (p) {
+        g += '<circle cx="' + X(parseD(p.d).getTime()).toFixed(1) + '" cy="' +
+             Y(p.per100).toFixed(1) + '" r="3" fill="' + x.color + '"/>';
+      });
     });
     g += '<text x="' + P + '" y="' + (H - 1) + '" font-size="8" fill="#9ca3af">' +
-         pts[0].d.slice(5) + "</text>";
+         md(iso(from)) + "</text>";
     g += '<text x="' + (W - P) + '" y="' + (H - 1) +
-         '" font-size="8" fill="#9ca3af" text-anchor="end">' +
-         pts[pts.length - 1].d.slice(5) + "</text>";
+         '" font-size="8" fill="#9ca3af" text-anchor="end">' + md(iso(TODAY)) + "</text>";
     return '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" height="' + H + '">' + g + "</svg>";
   }
 
   function chartCard(it) {
-    var best = it.best;
-    var obs = lastObs(it);
-    var per100Now = obs ? obs.per100 : (best ? best.price / best.total * 100 : null);
-    var ser = priceSeries(it);
-    var inRange = ser.filter(function (x) { return parseD(x.d) >= addD(TODAY, -ST.range); });
-    var low = inRange.length ? Math.min.apply(null, inRange.map(function (x) { return x.per100; })) : null;
-    var high = inRange.length ? Math.max.apply(null, inRange.map(function (x) { return x.per100; })) : null;
-    var cls = "", verdict = "样本不足，先记两三次价再判断", forecast = "";
-    if (inRange.length >= 2 && per100Now != null && low != null) {
-      var gap = (per100Now - low) / (high || 1) * 100;
-      if (gap < 3) { verdict = "当前就在历史低点附近，现在买"; cls = "ok"; }
-      else if (gap < 12) { verdict = "中等位，不急"; cls = "warn"; }
-      else { verdict = "明显偏高"; cls = "bad"; }
-      var nm = DATA.milestones.filter(function (m) { return parseD(m.d) > TODAY; })[0];
-      if (nm && per100Now > low * 1.05) {
-        var target = low * 1.05;
-        var saveYear = (per100Now - target) / 100 * it.rate * 12;
-        forecast = "建议等 <b>" + nm.name + "</b>（" + md(nm.d) + "，" +
+    var specsArr = allSpecs(it);
+    var lines = specsArr.map(function (s, i) {
+      var pts = specPoints(it, s);
+      var v = specVerdict(pts, ST.range);
+      var last = pts.length ? pts[pts.length - 1] : null;
+      var u = s.unit || it.unit;
+      return '<div class="row" style="justify-content:space-between;margin-top:6px;font-size:13px">' +
+        '<span><span style="color:' + specColor(i) + '">●</span> ' + esc(s.spec) +
+        (s.total ? ' <span class="sub">' + s.total + esc(u) + "</span>" : "") + "</span>" +
+        '<span class="sub">' + (last ? last.per100.toFixed(3) + " 元/100" + esc(u) +
+          " · " + md(last.d) : "—") + "</span>" +
+        '<span class="tag ' + v.cls + '">' + v.text + "</span></div>";
+    }).join("");
+
+    var fc = "";
+    var nm = DATA.milestones.filter(function (m) { return parseD(m.d) > TODAY; })[0];
+    if (nm) {
+      var worst = null;
+      specsArr.forEach(function (s) {
+        var v = specVerdict(specPoints(it, s), ST.range);
+        if (v.low == null || !v.last) return;
+        var gap = (v.last.per100 - v.low) / (v.high || 1) * 100;
+        if (!worst || gap > worst.gap) worst = { gap: gap, v: v, s: s };
+      });
+      if (worst && worst.gap >= 12) {
+        var target = worst.v.low * 1.05;
+        var saveYear = (worst.v.last.per100 - target) / 100 * it.rate * 12;
+        fc = '<div class="sub" style="margin-top:8px">' + esc(worst.s.spec) +
+          " 偏高 → 建议等 <b>" + nm.name + "</b>（" + md(nm.d) + "，" +
           diffD(TODAY, parseD(nm.d)) + " 天后），预计回到 ~" + target.toFixed(3) +
-          " 元/100" + esc(it.unit) + "，一年可省 <b>" + money(saveYear) + "</b>";
-        if (!cls) cls = "warn";
-      } else if (nm) {
-        forecast = "已接近低点，不必等 " + nm.name + "（" + md(nm.d) + "）";
+          " 元/100" + esc(it.unit) +
+          (saveYear > 0 ? "，一年可省 <b>" + money(saveYear) + "</b>" : "") + "</div>";
       }
     }
+
     return '<div style="border:1px solid var(--line);border-radius:12px;padding:12px">' +
       '<div class="row" style="justify-content:space-between"><b>' + esc(it.cat) + "</b>" +
-      '<span class="chip">' + (per100Now != null ? per100Now.toFixed(3) : "—") +
-      " 元/100" + esc(it.unit) + (obs ? " · " + md(obs.d) : "") + "</span></div>" +
-      sparkline(ser) +
-      '<div class="sub" style="margin-top:6px">' +
-      (low != null ? "近 " + ST.range + " 天：低 " + low.toFixed(3) + " / 高 " + high.toFixed(3) : "") +
-      "</div>" +
-      '<div style="margin-top:6px"><span class="tag ' + cls + '">' + verdict + "</span></div>" +
-      (forecast ? '<div class="sub" style="margin-top:5px">' + forecast + "</div>" : "") +
-      "</div>";
+      '<span class="sub">' + specsArr.length + " 个规格</span></div>" +
+      multiChart(it, specsArr) + lines + fc + "</div>";
   }
 
   function renderCharts(items) {
@@ -589,7 +682,7 @@
   /* ---------------- 导入导出 ---------------- */
   function exportJSON() {
     var payload = { version: 1, exportedAt: iso(TODAY), dataDate: DATA.updated,
-                    overrides: OVR, extra: EXTRA, log: LOG, custom: CUSTOM };
+                    overrides: OVR, extra: EXTRA, log: LOG, custom: CUSTOM, specs: SPECS };
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -623,7 +716,17 @@
     if (Array.isArray(p.custom)) p.custom.forEach(function (it) {
       if (it && it.cat && !CUSTOM.some(function (x) { return x.cat === it.cat; })) CUSTOM.push(it);
     });
-    save(LS.ovr, OVR); save(LS.extra, EXTRA); save(LS.log, LOG); save(LS.items, CUSTOM);
+    if (p.specs) Object.keys(p.specs).forEach(function (cat) {
+      SPECS[cat] = SPECS[cat] || [];
+      (p.specs[cat] || []).forEach(function (s) {
+        if (!s || !s.spec) return;
+        var k = specKey(s.spec, s.total);
+        if (!SPECS[cat].some(function (x) { return specKey(x.spec, x.total) === k; }))
+          SPECS[cat].push(s);
+      });
+    });
+    save(LS.ovr, OVR); save(LS.extra, EXTRA); save(LS.log, LOG);
+    save(LS.items, CUSTOM); save(LS_SPECS, SPECS);
     applyOverrides(); applyCustom();
   }
   function importJSON(file) {
@@ -669,6 +772,23 @@
     if (!t) return;
     if (t.dataset.r) { ST.range = +t.dataset.r; renderAll(); paintRange(); return; }
     if (t.dataset.checkin) { openCheckin(t.dataset.checkin); return; }
+    if (t.dataset.newspec) {
+      var ncat = t.dataset.newspec, nit = findItem(ncat);
+      if (!nit) return;
+      var label = window.prompt("新规格的名字（例：80抽×8包、3kg×2瓶）", "");
+      if (!label) return;
+      var tot = parseFloat(window.prompt("这一件一共多少" + nit.unit + "？（只填数字，例：640）", ""));
+      if (!tot || tot <= 0) return;
+      SPECS[ncat] = SPECS[ncat] || [];
+      var nk = specKey(label, tot);
+      if (!SPECS[ncat].some(function (x) { return specKey(x.spec, x.total) === nk; })) {
+        SPECS[ncat].push({ spec: label, total: tot, unit: nit.unit });
+        save(LS_SPECS, SPECS);
+      }
+      renderAll();
+      toast("已加规格：" + label);
+      return;
+    }
     if (t.id === "pl-save") { savePriceEntry(); return; }
     if (t.id === "exp") { exportJSON(); return; }
     if (t.id === "impbtn") { document.getElementById("imp").click(); return; }

@@ -1,6 +1,6 @@
 /* 唯一数据源：改这里的 JSON 即可，不用碰程序 */
 window.SUPPLY_DATA = {
-  "updated": "2026-11-21",
+  "updated": "2026-11-22",
   "settings": {
     "safetyDays": 7,
     "freeShip": 59,
