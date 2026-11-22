@@ -646,8 +646,11 @@
                   price: price, total: best.total, spec: best.spec, per100: per100 });
     LOG = LOG.slice(0, 300);
     save(LS.log, LOG);
-    EXTRA[it.cat] = EXTRA[it.cat] || [];
-    EXTRA[it.cat].push({ d: iso(TODAY), raw: price, total: best.total, per100: per100 });
+    var ckKey = specKey(best.spec, best.total);
+    EXTRA[it.cat] = EXTRA[it.cat] || {};
+    var ckArr = (EXTRA[it.cat][ckKey] || []).filter(function (x) { return x.d !== iso(TODAY); });
+    ckArr.push({ d: iso(TODAY), raw: price, total: best.total, per100: per100 });
+    EXTRA[it.cat][ckKey] = ckArr;
     save(LS.extra, EXTRA);
     closeCheckin();
     renderAll();
@@ -812,8 +815,11 @@
       var price = parseFloat(v);
       if (!price || price <= 0) return;
       var per100 = +(price / best.total * 100).toFixed(4);
-      EXTRA[cat] = EXTRA[cat] || [];
-      EXTRA[cat].push({ d: iso(TODAY), raw: price, total: best.total, per100: per100 });
+      var addKey = specKey(best.spec, best.total);
+      EXTRA[cat] = EXTRA[cat] || {};
+      var addArr = (EXTRA[cat][addKey] || []).filter(function (x) { return x.d !== iso(TODAY); });
+      addArr.push({ d: iso(TODAY), raw: price, total: best.total, per100: per100 });
+      EXTRA[cat][addKey] = addArr;
       save(LS.extra, EXTRA);
       renderAll(); toast("已记录价格");
       return;
