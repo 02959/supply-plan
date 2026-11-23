@@ -286,14 +286,16 @@
      EXTRA[品类][specKey] = [{d, raw, total, per100}]
      每个规格一条独立历史，互不干扰。 */
   var LS_SPECS = "supply_extra_specs_v1";
-  var SPECS = load(LS_SPECS, {});   /* {品类: [{spec,total,unit}]} 手动添加的规格 */
+  /* SPECS[品类] = { list:[{spec,total,ply}], author:true }
+     没动过就沿用 data.js 的 offers；改/删/加过就以这里为准。ply = 层数（纸巾用，0=未标） */
+  var SPECS = load(LS_SPECS, {});
 
   function specKey(spec, total) {
     var t = Number(total) || 0;
     return (spec || "未命名") + "@" + (Math.round(t * 1000) / 1000);
   }
 
-  /* 老格式（品类下的扁平数组）自动迁移成按规格分组 */
+  /* 老格式（EXTRA[品类] 是扁平数组）自动迁移成按规格分组 */
   (function migrateExtra() {
     var changed = false;
     Object.keys(EXTRA).forEach(function (cat) {
@@ -312,20 +314,52 @@
     if (changed) save(LS.extra, EXTRA);
   })();
 
-  /* 该品类下出现过的所有规格：data.js 的 offers + 手动加的 + 录过价的 */
+  /* 老格式（只存"额外加的规格"数组）迁移成 authoritative 列表，避免丢掉 data.js 里的规格 */
+  (function migrateSpecs() {
+    var changed = false;
+    Object.keys(SPECS).forEach(function (cat) {
+      if (!Array.isArray(SPECS[cat])) return;
+      var it = null;
+      for (var i = 0; i < DATA.items.length; i++)
+        if (DATA.items[i].cat === cat) it = DATA.items[i];
+      var base = it ? (it.offers || []).map(function (o) {
+        return { spec: o.spec, total: o.total, ply: o.ply || 0 };
+      }) : [];
+      SPECS[cat].forEach(function (s) {
+        var k = specKey(s.spec, s.total);
+        if (!base.some(function (b) { return specKey(b.spec, b.total) === k; }))
+          base.push({ spec: s.spec, total: s.total, ply: s.ply || 0 });
+      });
+      SPECS[cat] = { list: base, author: true };
+      changed = true;
+    });
+    if (changed) save(LS_SPECS, SPECS);
+  })();
+
+  function specList(it) {
+    var s = SPECS[it.cat];
+    if (s && s.list) return s.list;
+    return (it.offers || []).map(function (o) {
+      return { spec: o.spec, total: o.total, ply: o.ply || 0, cls: o.cls || "", price: o.price };
+    });
+  }
+
+  function setSpecList(it, list) {
+    SPECS[it.cat] = { list: list, author: true };
+    save(LS_SPECS, SPECS);
+  }
+
+  /* 该品类下出现过的所有规格：你的清单 + 历史上录过价但已不在清单里的（孤儿） */
   function allSpecs(it) {
     var out = [], seen = {};
-    (it.offers || []).forEach(function (o) {
+    specList(it).forEach(function (o) {
       var k = specKey(o.spec, o.total);
       if (seen[k]) return;
       seen[k] = 1;
-      out.push({ spec: o.spec, total: o.total, unit: o.unit || it.unit, k: k, price: o.price });
-    });
-    (SPECS[it.cat] || []).forEach(function (s) {
-      var k = specKey(s.spec, s.total);
-      if (seen[k]) return;
-      seen[k] = 1;
-      out.push({ spec: s.spec, total: s.total, unit: s.unit || it.unit, k: k, price: null });
+      out.push({
+        spec: o.spec, total: o.total, unit: o.unit || it.unit, k: k,
+        price: o.price == null ? null : o.price, ply: o.ply || 0, cls: o.cls || ""
+      });
     });
     var map = EXTRA[it.cat] || {};
     Object.keys(map).forEach(function (k) {
@@ -334,17 +368,22 @@
       var pts = map[k] || [];
       out.push({
         spec: k.split("@")[0], total: pts.length ? pts[0].total : 0,
-        unit: it.unit, k: k, price: null
+        unit: it.unit, k: k, price: null, ply: 0, cls: "", orphan: true
       });
     });
     return out;
   }
 
-  /* 某规格的完整价格历史（成交记录 + 手录） */
+  /* 某规格的完整价格历史（成交记录 + 手录）
+     hist 里若有 spec 就精确匹配；没有则退回按总量匹配（同总量有多个规格时会串，尽量别依赖） */
   function specPoints(it, s) {
     var pts = [];
     (it.hist || []).forEach(function (h) {
-      if (s.total && Math.abs(h.total - s.total) < 1e-6) pts.push(h);
+      if (h.spec) {
+        if (specKey(h.spec, h.total) === s.k) pts.push(h);
+      } else if (s.total && Math.abs(h.total - s.total) < 1e-6) {
+        pts.push(h);
+      }
     });
     ((EXTRA[it.cat] || {})[s.k] || []).forEach(function (x) { pts.push(x); });
     pts.sort(function (a, b) { return String(a.d).localeCompare(String(b.d)); });
@@ -356,7 +395,8 @@
     var from = addD(TODAY, -rangeDays);
     var inR = pts.filter(function (p) { return parseD(p.d) >= from; });
     if (!inR.length) return { cls: "", text: "还没价格记录" };
-    if (inR.length < 2) return { cls: "", text: "只 1 次，再录几次" };
+    var dset = {}; inR.forEach(function (p) { dset[p.d] = 1; });
+    if (Object.keys(dset).length < 2) return { cls: "", text: "只 1 次，再录几次" };
     var low = Math.min.apply(null, inR.map(function (p) { return p.per100; }));
     var high = Math.max.apply(null, inR.map(function (p) { return p.per100; }));
     var last = inR[inR.length - 1];
@@ -484,21 +524,79 @@
     return '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" height="' + H + '">' + g + "</svg>";
   }
 
+  /* 规格对比：按层数分组，组内标最优；每行可改/删 */
+  function cmpTable(it, specsArr) {
+    var rows = specsArr.map(function (s, i) {
+      var pts = specPoints(it, s);
+      return { s: s, i: i, v: specVerdict(pts, ST.range),
+               last: pts.length ? pts[pts.length - 1] : null };
+    });
+
+    var groups = [], gmap = {};
+    rows.forEach(function (r) {
+      var key = r.s.cls || (r.s.ply ? (r.s.ply + " 层") : "未分类");
+      if (!gmap[key]) { gmap[key] = { name: key, items: [] }; groups.push(gmap[key]); }
+      gmap[key].items.push(r);
+    });
+    groups.sort(function (a, b) {
+      var ua = a.name === "未分类" ? 1 : 0, ub = b.name === "未分类" ? 1 : 0;
+      if (ua !== ub) return ua - ub;
+      return (b.items[0].s.total || 0) - (a.items[0].s.total || 0);
+    });
+
+    var u = it.unit;
+    var html = '<div class="scroll"><table class="cmp"><thead><tr>' +
+      "<th>规格</th><th class=\"num\">总量</th><th class=\"num\">上次价</th>" +
+      '<th class="num">元/100' + esc(u) + '</th><th class="num">日期</th><th></th>' +
+      "</tr></thead><tbody>";
+
+    groups.forEach(function (g) {
+      var best = null;
+      g.items.forEach(function (r) {
+        if (!r.last || !r.s.total) return;
+        if (!best || r.last.per100 < best.last.per100) best = r;
+      });
+      html += '<tr class="grp"><td colspan="6">' + esc(g.name) +
+        (best ? ' <span class="sub">组内最低 ' + best.last.per100.toFixed(3) +
+          " 元/100" + esc(u) + "（" + esc(best.s.spec) + "）</span>" : "") + "</td></tr>";
+      g.items.forEach(function (r) {
+        var star = (best === r) ? "★ " : "";
+        html += "<tr>" +
+          '<td><span style="color:' + specColor(r.i) + '">●</span> ' + star + esc(r.s.spec) +
+            (r.s.orphan ? ' <span class="tag">旧记录</span>' : "") + "</td>" +
+          '<td class="num sub">' + (r.s.total ? r.s.total + esc(r.s.unit || u) : "—") + "</td>" +
+          '<td class="num">' + (r.last ? money(r.last.raw) : "—") + "</td>" +
+          '<td class="num"><b>' + (r.last ? r.last.per100.toFixed(3) : "—") + "</b></td>" +
+          '<td class="num sub">' + (r.last ? md(r.last.d) : "—") + "</td>" +
+          '<td style="white-space:nowrap">' +
+            '<button class="ghost" data-specedit="' + esc(it.cat) + "|" + esc(r.s.k) +
+              '" title="改规格">✎</button>' +
+            '<button class="ghost" data-specdel="' + esc(it.cat) + "|" + esc(r.s.k) +
+              '" title="删规格">✕</button>' +
+          "</td></tr>";
+      });
+    });
+    html += "</tbody></table></div>";
+
+    /* 组间对比：不同层数的每抽单价差多少 */
+    var parts = groups.filter(function (g) { return g.name !== "未分类"; }).map(function (g) {
+      var b = null;
+      g.items.forEach(function (r) { if (r.last && (b === null || r.last.per100 < b)) b = r.last.per100; });
+      return b === null ? null : { name: g.name, v: b };
+    }).filter(Boolean);
+    if (parts.length >= 2) {
+      parts.sort(function (a, b) { return a.v - b.v; });
+      var lo = parts[0], hi = parts[parts.length - 1];
+      html += '<div class="sub" style="margin-top:6px">分类对比：' + esc(lo.name) + " 最低 " +
+        lo.v.toFixed(3) + " · " + esc(hi.name) + " 最低 " + hi.v.toFixed(3) +
+        "（" + esc(lo.name) + " 便宜 " + ((1 - lo.v / hi.v) * 100).toFixed(0) +
+        "%，但两者不是同一类东西，值不值看你自己权衡）</div>";
+    }
+    return html;
+  }
+
   function chartCard(it) {
     var specsArr = allSpecs(it);
-    var lines = specsArr.map(function (s, i) {
-      var pts = specPoints(it, s);
-      var v = specVerdict(pts, ST.range);
-      var last = pts.length ? pts[pts.length - 1] : null;
-      var u = s.unit || it.unit;
-      return '<div class="row" style="justify-content:space-between;margin-top:6px;font-size:13px">' +
-        '<span><span style="color:' + specColor(i) + '">●</span> ' + esc(s.spec) +
-        (s.total ? ' <span class="sub">' + s.total + esc(u) + "</span>" : "") + "</span>" +
-        '<span class="sub">' + (last ? last.per100.toFixed(3) + " 元/100" + esc(u) +
-          " · " + md(last.d) : "—") + "</span>" +
-        '<span class="tag ' + v.cls + '">' + v.text + "</span></div>";
-    }).join("");
-
     var fc = "";
     var nm = DATA.milestones.filter(function (m) { return parseD(m.d) > TODAY; })[0];
     if (nm) {
@@ -511,19 +609,16 @@
       });
       if (worst && worst.gap >= 12) {
         var target = worst.v.low * 1.05;
-        var saveYear = (worst.v.last.per100 - target) / 100 * it.rate * 12;
-        fc = '<div class="sub" style="margin-top:8px">' + esc(worst.s.spec) +
-          " 偏高 → 建议等 <b>" + nm.name + "</b>（" + md(nm.d) + "，" +
+        fc = '<div class="sub" style="margin-top:6px">' + esc(worst.s.spec) +
+          " 偏高 → 可等 <b>" + nm.name + "</b>（" + md(nm.d) + "，" +
           diffD(TODAY, parseD(nm.d)) + " 天后），预计回到 ~" + target.toFixed(3) +
-          " 元/100" + esc(it.unit) +
-          (saveYear > 0 ? "，一年可省 <b>" + money(saveYear) + "</b>" : "") + "</div>";
+          " 元/100" + esc(it.unit) + "</div>";
       }
     }
-
     return '<div style="border:1px solid var(--line);border-radius:12px;padding:12px">' +
-      '<div class="row" style="justify-content:space-between"><b>' + esc(it.cat) + "</b>" +
-      '<span class="sub">' + specsArr.length + " 个规格</span></div>" +
-      multiChart(it, specsArr) + lines + fc + "</div>";
+      '<div class="row" style="justify-content:space-between;margin-bottom:4px"><b>' + esc(it.cat) + "</b>" +
+      '<span class="sub">' + specsArr.length + " 个规格 · 单位 " + esc(it.unit) + "</span></div>" +
+      multiChart(it, specsArr) + cmpTable(it, specsArr) + fc + "</div>";
   }
 
   function renderCharts(items) {
@@ -780,18 +875,23 @@
       if (!nit) return;
       var label = window.prompt("新规格的名字（例：80抽×8包、3kg×2瓶）", "");
       if (!label) return;
-      var tot = parseFloat(window.prompt("这一件一共多少" + nit.unit + "？（只填数字，例：640）", ""));
+      var tot = parseFloat(window.prompt("这一件一共多少" + nit.unit + "？（数字，例 640）", ""));
       if (!tot || tot <= 0) return;
-      SPECS[ncat] = SPECS[ncat] || [];
+      var clsRaw = window.prompt("分类（纸巾填 3层/4层，洗手液填 瓶装/袋装，其它留空）", "");
+      var cls = String(clsRaw || "").trim();
+      var pm = /(\d)\s*层/.exec(cls) || /(\d)\s*层/.exec(label);
+      var list = specList(nit).slice();
       var nk = specKey(label, tot);
-      if (!SPECS[ncat].some(function (x) { return specKey(x.spec, x.total) === nk; })) {
-        SPECS[ncat].push({ spec: label, total: tot, unit: nit.unit });
-        save(LS_SPECS, SPECS);
+      if (!list.some(function (x) { return specKey(x.spec, x.total) === nk; })) {
+        list.push({ spec: label, total: tot, cls: cls, ply: pm ? +pm[1] : 0 });
+        setSpecList(nit, list);
       }
       renderAll();
       toast("已加规格：" + label);
       return;
     }
+    if (t.dataset.specedit) { editSpec(t.dataset.specedit); return; }
+    if (t.dataset.specdel) { delSpec(t.dataset.specdel); return; }
     if (t.id === "pl-save") { savePriceEntry(); return; }
     if (t.id === "exp") { exportJSON(); return; }
     if (t.id === "impbtn") { document.getElementById("imp").click(); return; }
@@ -825,6 +925,43 @@
       return;
     }
   });
+
+  /* 规格的改 / 删 */
+  function splitRef(ref) {
+    var i = String(ref).indexOf("|");
+    return { cat: String(ref).slice(0, i), k: String(ref).slice(i + 1) };
+  }
+
+  function editSpec(ref) {
+    var r = splitRef(ref), it = findItem(r.cat);
+    if (!it) return;
+    var list = specList(it).slice(), idx = -1;
+    for (var i = 0; i < list.length; i++)
+      if (specKey(list[i].spec, list[i].total) === r.k) { idx = i; break; }
+    if (idx < 0) return;
+    var cur = list[idx];
+    var spec = window.prompt("规格名字（例：80抽×4包）", cur.spec);
+    if (!spec) return;
+    var tot = parseFloat(window.prompt("这一件一共多少" + it.unit + "？（数字）", String(cur.total)));
+    if (!tot || tot <= 0) return;
+    var clsRaw = window.prompt("分类（纸巾填 3层/4层，洗手液填 瓶装/袋装，其它留空）", cur.cls || "");
+    var cls = String(clsRaw || "").trim();
+    var pm = /(\d)\s*层/.exec(cls) || /(\d)\s*层/.exec(spec);
+    list[idx] = { spec: spec, total: tot, cls: cls, ply: pm ? +pm[1] : 0 };
+    setSpecList(it, list);
+    renderAll();
+    toast("已更新规格");
+  }
+
+  function delSpec(ref) {
+    var r = splitRef(ref), it = findItem(r.cat);
+    if (!it) return;
+    if (!window.confirm("删掉这个规格？历史价格会保留，之后显示为「旧记录」")) return;
+    var list = specList(it).filter(function (s) { return specKey(s.spec, s.total) !== r.k; });
+    setSpecList(it, list);
+    renderAll();
+    toast("已删除规格");
+  }
 
   function paintRange() {
     document.querySelectorAll("button[data-r]").forEach(function (b) {
