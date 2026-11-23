@@ -524,24 +524,7 @@
     return '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" height="' + H + '">' + g + "</svg>";
   }
 
-  /* 分类配色：低饱和、彼此拉开；刻意不用黄色系——黄色留给「本组最优」高亮 */
-  var CLS_COLORS = {
-    "3层": { bg: "#eef2ff", bd: "#a5b4fc", tx: "#4338ca" },
-    "4层": { bg: "#e0f2fe", bd: "#93c5fd", tx: "#075985" },
-    "瓶装": { bg: "#f0fdf4", bd: "#86efac", tx: "#166534" },
-    "袋装": { bg: "#fdf2f8", bd: "#f9a8d4", tx: "#9d174d" }
-  };
-  var CLS_FALLBACK = [
-    { bg: "#f5f3ff", bd: "#c4b5fd", tx: "#5b21b6" },
-    { bg: "#f0fdfa", bd: "#5eead4", tx: "#115e59" },
-    { bg: "#fdf2f8", bd: "#f9a8d4", tx: "#9d174d" }
-  ];
-  function clsStyle(name) {
-    if (CLS_COLORS[name]) return CLS_COLORS[name];
-    var h = 0;
-    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-    return CLS_FALLBACK[h % CLS_FALLBACK.length];
-  }
+  /* 分类配色已挪到 style.css（按 data-c 匹配，浅色/暗色各一套） */
 
   /* 规格对比表：按分类分组，本组最优用浅黄标出 */
   function cmpTable(it, specsArr) {
@@ -574,17 +557,15 @@
         if (!r.last || !r.s.total) return;
         if (!best || r.last.per100 < best.last.per100) best = r;
       });
-      var st = clsStyle(g.name);
       html += '<tr class="grp"><td colspan="6">' +
-        '<span class="cls" style="background:' + st.bg + ";border-color:" + st.bd +
-        ";color:" + st.tx + '">' + esc(g.name) + "</span>" +
+        '<span class="cls" data-c="' + esc(g.name) + '">' + esc(g.name) + "</span>" +
         (best ? '<span class="sub">本组最优 ' + best.last.per100.toFixed(3) + " 元/100" +
           esc(u) + "（" + esc(best.s.spec) + "）</span>" : "") +
         "</td></tr>";
 
       g.items.forEach(function (r) {
         var isBest = (best === r);
-        html += "<tr" + (isBest ? ' class="bestrow" style="background:#fffbeb"' : "") + ">" +
+        html += "<tr" + (isBest ? ' class="bestrow"' : "") + ">" +
           "<td>" + (isBest ? '<b style="color:#b45309">★ </b>' : "") + esc(r.s.spec) +
           (r.s.orphan ? ' <span class="tag">旧记录</span>' : "") + "</td>" +
           '<td class="num sub">' + (r.s.total ? r.s.total + esc(r.s.unit || u) : "—") + "</td>" +
