@@ -330,7 +330,7 @@
         if (!base.some(function (b) { return specKey(b.spec, b.total) === k; }))
           base.push({ spec: s.spec, total: s.total, ply: s.ply || 0 });
       });
-      SPECS[cat] = { list: base, author: true };
+      SPECS[cat] = { list: SPECS[cat], edited: false };
       changed = true;
     });
     if (changed) save(LS_SPECS, SPECS);
@@ -338,14 +338,27 @@
 
   function specList(it) {
     var s = SPECS[it.cat];
-    if (s && s.list) return s.list;
-    return (it.offers || []).map(function (o) {
+    /* 亲手改过/删过/加过 → 以本地为准 */
+    if (s && s.edited && Array.isArray(s.list)) return s.list;
+    /* 否则：data.js 为准，本地额外规格并进来（按 规格@总量 去重） */
+    var base = (it.offers || []).map(function (o) {
       return { spec: o.spec, total: o.total, ply: o.ply || 0, cls: o.cls || "", price: o.price };
     });
+    var extra = (s && Array.isArray(s.list)) ? s.list : [];
+    extra.forEach(function (x) {
+      var k = specKey(x.spec, x.total);
+      if (!base.some(function (b) { return specKey(b.spec, b.total) === k; })) {
+        base.push({
+          spec: x.spec, total: x.total, ply: x.ply || 0,
+          cls: x.cls || "", price: null
+        });
+      }
+    });
+    return base;
   }
 
   function setSpecList(it, list) {
-    SPECS[it.cat] = { list: list, author: true };
+    SPECS[it.cat] = { list: list, edited: true };
     save(LS_SPECS, SPECS);
   }
 
