@@ -524,17 +524,35 @@
     return '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" height="' + H + '">' + g + "</svg>";
   }
 
-  /* 规格对比：按层数分组，组内标最优；每行可改/删 */
+  /* 分类配色：低饱和、彼此拉开；刻意不用黄色系——黄色留给「本组最优」高亮 */
+  var CLS_COLORS = {
+    "3层": { bg: "#eef2ff", bd: "#a5b4fc", tx: "#4338ca" },
+    "4层": { bg: "#e0f2fe", bd: "#93c5fd", tx: "#075985" },
+    "瓶装": { bg: "#f0fdf4", bd: "#86efac", tx: "#166534" },
+    "袋装": { bg: "#fdf2f8", bd: "#f9a8d4", tx: "#9d174d" }
+  };
+  var CLS_FALLBACK = [
+    { bg: "#f5f3ff", bd: "#c4b5fd", tx: "#5b21b6" },
+    { bg: "#f0fdfa", bd: "#5eead4", tx: "#115e59" },
+    { bg: "#fdf2f8", bd: "#f9a8d4", tx: "#9d174d" }
+  ];
+  function clsStyle(name) {
+    if (CLS_COLORS[name]) return CLS_COLORS[name];
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return CLS_FALLBACK[h % CLS_FALLBACK.length];
+  }
+
+  /* 规格对比表：按分类分组，本组最优用浅黄标出 */
   function cmpTable(it, specsArr) {
-    var rows = specsArr.map(function (s, i) {
+    var rows = specsArr.map(function (s) {
       var pts = specPoints(it, s);
-      return { s: s, i: i, v: specVerdict(pts, ST.range),
-               last: pts.length ? pts[pts.length - 1] : null };
+      return { s: s, last: pts.length ? pts[pts.length - 1] : null, n: pts.length };
     });
 
     var groups = [], gmap = {};
     rows.forEach(function (r) {
-      var key = r.s.cls || (r.s.ply ? (r.s.ply + " 层") : "未分类");
+      var key = r.s.cls || (r.s.ply ? (r.s.ply + "层") : "未分类");
       if (!gmap[key]) { gmap[key] = { name: key, items: [] }; groups.push(gmap[key]); }
       gmap[key].items.push(r);
     });
@@ -546,7 +564,7 @@
 
     var u = it.unit;
     var html = '<div class="scroll"><table class="cmp"><thead><tr>' +
-      "<th>规格</th><th class=\"num\">总量</th><th class=\"num\">上次价</th>" +
+      "<th>规格</th><th class=\"num\">总量</th><th class=\"num\">最近价</th>" +
       '<th class="num">元/100' + esc(u) + '</th><th class="num">日期</th><th></th>' +
       "</tr></thead><tbody>";
 
@@ -556,14 +574,19 @@
         if (!r.last || !r.s.total) return;
         if (!best || r.last.per100 < best.last.per100) best = r;
       });
-      html += '<tr class="grp"><td colspan="6">' + esc(g.name) +
-        (best ? ' <span class="sub">组内最低 ' + best.last.per100.toFixed(3) +
-          " 元/100" + esc(u) + "（" + esc(best.s.spec) + "）</span>" : "") + "</td></tr>";
+      var st = clsStyle(g.name);
+      html += '<tr class="grp"><td colspan="6">' +
+        '<span class="cls" style="background:' + st.bg + ";border-color:" + st.bd +
+        ";color:" + st.tx + '">' + esc(g.name) + "</span>" +
+        (best ? '<span class="sub">本组最优 ' + best.last.per100.toFixed(3) + " 元/100" +
+          esc(u) + "（" + esc(best.s.spec) + "）</span>" : "") +
+        "</td></tr>";
+
       g.items.forEach(function (r) {
-        var star = (best === r) ? "★ " : "";
-        html += "<tr>" +
-          '<td><span style="color:' + specColor(r.i) + '">●</span> ' + star + esc(r.s.spec) +
-            (r.s.orphan ? ' <span class="tag">旧记录</span>' : "") + "</td>" +
+        var isBest = (best === r);
+        html += "<tr" + (isBest ? ' class="bestrow" style="background:#fffbeb"' : "") + ">" +
+          "<td>" + (isBest ? '<b style="color:#b45309">★ </b>' : "") + esc(r.s.spec) +
+          (r.s.orphan ? ' <span class="tag">旧记录</span>' : "") + "</td>" +
           '<td class="num sub">' + (r.s.total ? r.s.total + esc(r.s.unit || u) : "—") + "</td>" +
           '<td class="num">' + (r.last ? money(r.last.raw) : "—") + "</td>" +
           '<td class="num"><b>' + (r.last ? r.last.per100.toFixed(3) : "—") + "</b></td>" +
@@ -578,25 +601,35 @@
     });
     html += "</tbody></table></div>";
 
-    /* 组间对比：不同层数的每抽单价差多少 */
+    /* 分类之间比一比 */
     var parts = groups.filter(function (g) { return g.name !== "未分类"; }).map(function (g) {
       var b = null;
-      g.items.forEach(function (r) { if (r.last && (b === null || r.last.per100 < b)) b = r.last.per100; });
+      g.items.forEach(function (r) {
+        if (r.last && (b === null || r.last.per100 < b)) b = r.last.per100;
+      });
       return b === null ? null : { name: g.name, v: b };
     }).filter(Boolean);
     if (parts.length >= 2) {
       parts.sort(function (a, b) { return a.v - b.v; });
       var lo = parts[0], hi = parts[parts.length - 1];
-      html += '<div class="sub" style="margin-top:6px">分类对比：' + esc(lo.name) + " 最低 " +
-        lo.v.toFixed(3) + " · " + esc(hi.name) + " 最低 " + hi.v.toFixed(3) +
+      html += '<div class="sub" style="margin-top:6px">分类对比：' + esc(lo.name) + " 最优 " +
+        lo.v.toFixed(3) + " · " + esc(hi.name) + " 最优 " + hi.v.toFixed(3) +
         "（" + esc(lo.name) + " 便宜 " + ((1 - lo.v / hi.v) * 100).toFixed(0) +
-        "%，但两者不是同一类东西，值不值看你自己权衡）</div>";
+        "%，但不是同一类东西，值不值看你自己权衡）</div>";
     }
     return html;
   }
 
   function chartCard(it) {
     var specsArr = allSpecs(it);
+    var chartSpecs = specsArr.filter(function (s) {
+      return specPoints(it, s).length >= 2;
+    });
+    var chart = chartSpecs.length
+      ? '<details style="margin-top:8px"><summary class="sub">价格曲线（' + chartSpecs.length +
+        " 个规格有 2 个以上价格点）</summary>" + multiChart(it, chartSpecs) + "</details>"
+      : "";
+
     var fc = "";
     var nm = DATA.milestones.filter(function (m) { return parseD(m.d) > TODAY; })[0];
     if (nm) {
@@ -615,10 +648,12 @@
           " 元/100" + esc(it.unit) + "</div>";
       }
     }
+
     return '<div style="border:1px solid var(--line);border-radius:12px;padding:12px">' +
-      '<div class="row" style="justify-content:space-between;margin-bottom:4px"><b>' + esc(it.cat) + "</b>" +
+      '<div class="row" style="justify-content:space-between;margin-bottom:4px"><b>' +
+      esc(it.cat) + "</b>" +
       '<span class="sub">' + specsArr.length + " 个规格 · 单位 " + esc(it.unit) + "</span></div>" +
-      multiChart(it, specsArr) + cmpTable(it, specsArr) + fc + "</div>";
+      cmpTable(it, specsArr) + chart + fc + "</div>";
   }
 
   function renderCharts(items) {
