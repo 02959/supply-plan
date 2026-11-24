@@ -114,3 +114,17 @@ table.cmp tr:last-child td{border-bottom:none}
   .cls[data-c="瓶装"]{color:#86efac}
   .cls[data-c="袋装"]{color:#f9a8d4}
 }
+
+/* 上次核算的「新鲜度」配色：底半透明，浅色/暗色都能显示 */
+td.age1{background:rgba(14,165,233,.16);color:#075985;font-weight:700}
+td.age2{background:rgba(34,197,94,.16);color:#166534;font-weight:700}
+td.age3{background:rgba(234,179,8,.18);color:#854d0e;font-weight:700}
+td.age4{background:rgba(249,115,22,.18);color:#9a3412;font-weight:700}
+td.age5{background:rgba(239,68,68,.18);color:#991b1b;font-weight:700}
+@media (prefers-color-scheme: dark){
+  td.age1{color:#7dd3fc}
+  td.age2{color:#86efac}
+  td.age3{color:#fde047}
+  td.age4{color:#fdba74}
+  td.age5{color:#fca5a5}
+}

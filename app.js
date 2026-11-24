@@ -47,7 +47,20 @@
       if (!o) return;
       if (typeof o.stock === "number") it.stock = o.stock;
       if (typeof o.rate === "number") it.rate = o.rate;
+      if (o.stockAt) it.stockAt = o.stockAt;
     });
+  }
+
+  /* 存量锚点：从盘存日到今天过了几天 */
+  function daysSinceStock(it) {
+    var d = it.stockAt ? parseD(it.stockAt) : parseD(DATA.updated || iso(TODAY));
+    return Math.max(0, diffD(d, TODAY));
+  }
+
+  /* 有效存量 = 记录值 − 日均 × 天数（不小于 0） */
+  function effStock(it) {
+    var perDay = (it.rate || 0) / 30;
+    return Math.max(0, (it.stock || 0) - perDay * daysSinceStock(it));
   }
   function applyCustom() {
     CUSTOM.forEach(function (it) {
@@ -75,7 +88,8 @@
     var perDay = it.rate / 30;
     var pFast = (it.rateFast || it.rate) / 30;
     var pSlow = (it.rateSlow || it.rate) / 30;
-    var dLeft = perDay > 0 ? it.stock / perDay : 1e9;
+    var stockNow = effStock(it);
+    var dLeft = perDay > 0 ? stockNow / perDay : 1e9;
     var best = (it.offers && it.offers[0]) || null;
     var per100 = best ? best.price / best.total * 100 : null;
     var cover = best && perDay > 0 ? best.total / perDay : 1e9;
@@ -83,8 +97,9 @@
     return Object.assign({}, it, {
       dLeft: dLeft, best: best, per100: per100, cover: cover,
       runout: addD(TODAY, Math.round(Math.min(dLeft, 9999))),
-      early: addD(TODAY, Math.round(Math.min(pFast > 0 ? it.stock / pFast : 9999, 9999))),
-      late: addD(TODAY, Math.round(Math.min(pSlow > 0 ? it.stock / pSlow : 9999, 9999))),
+      stockNow: stockNow,
+      early: addD(TODAY, Math.round(Math.min(pFast > 0 ? stockNow / pFast : 9999, 9999))),
+      late: addD(TODAY, Math.round(Math.min(pSlow > 0 ? stockNow / pSlow : 9999, 9999))),
       restock: addD(TODAY, Math.max(0, Math.round(restockIn))),
       urgent: restockIn <= 0
     });
@@ -252,6 +267,24 @@
     set("orders", html || '<div class="sub">暂无计划</div>');
   }
 
+  /* 距上次核算的天数 → 颜色档 */
+  function ageDays(it) {
+    if (!it.stockAt) return 999;
+    return Math.max(0, diffD(parseD(it.stockAt), TODAY));
+  }
+  function ageCls(it) {
+    var d = ageDays(it);
+    if (d <= 7) return "age1";
+    if (d <= 14) return "age2";
+    if (d <= 21) return "age3";
+    if (d <= 28) return "age4";
+    return "age5";
+  }
+  function ageText(it) {
+    var d = ageDays(it);
+    return d >= 999 ? "未核算" : (d === 0 ? "今天" : d + " 天前");
+  }
+
   function renderItems(items) {
     var tb = document.querySelector("#tbl tbody");
     if (!tb) return;
@@ -260,7 +293,7 @@
       return '<tr data-k="' + k + '">' +
         "<td><b>" + esc(i.cat) + '</b><div class="sub" style="font-size:12px">' +
         esc(i.name) + "</div></td>" +
-        '<td class="num"><input type="number" step="1" min="0" value="' + Math.round(i.stock) +
+        '<td class="num"><input type="number" step="1" min="0" value="' + Math.floor(i.stockNow) +
         '" data-f="stock"><div class="sub" style="font-size:11px">' + esc(i.unit) + "</div></td>" +
         '<td class="num"><input type="number" step="1" min="0" value="' + Math.round(i.rate) +
         '" data-f="rate"></td>' +
@@ -271,8 +304,8 @@
         md(iso(i.late)) + "</td>" +
         '<td class="num">' + (i.per100 != null ? i.per100.toFixed(3) : "—") +
         '<div class="sub" style="font-size:11px">元/100' + esc(i.unit) + "</div></td>" +
-        '<td class="sub" style="font-size:12.5px">' +
-        (i.best ? esc(i.best.spec) + " " + money(i.best.price) : "—") + "</td>" +
+        '<td class="num ' + ageCls(i) + '">' + (i.stockAt ? md(i.stockAt) : "—") +
+        '<div style="font-size:11px;opacity:.85">' + ageText(i) + "</div></td>" +
         '<td class="num">' + (i.cover < 9999 ? Math.round(i.cover) + " 天" : "—") +
         '<div class="hbar" style="margin-top:4px"><i style="width:' + pct + '%"></i></div></td>' +
         '<td style="white-space:nowrap">' +
@@ -720,7 +753,7 @@
     SH.cat = cat;
     txt("sh-title", "打卡 · " + cat);
     txt("sh-sub", best.spec + " · 当前单价 " + money(best.price) +
-        " · 库存 " + Math.round(it.stock) + " " + it.unit);
+        " · 库存 " + Math.floor(effStock(it)) + " " + it.unit);
     var q = document.getElementById("sh-qty"), p = document.getElementById("sh-price");
     if (q) q.value = 1;
     if (p) p.value = best.price.toFixed(2);
@@ -749,8 +782,8 @@
         (per100 < base - 0.001 ? "（比当前便宜 " + ((1 - per100 / base) * 100).toFixed(0) + "%）"
           : (per100 > base + 0.001 ? "（比当前贵）" : "（与当前持平）"));
     }
-    set("sh-calc", "库存 " + Math.round(it.stock) + " → <b>" +
-        Math.round(it.stock + addQty) + " " + it.unit + "</b>（+" + addQty + "）<br>" + note);
+    set("sh-calc", "库存 " + Math.floor(effStock(it)) + " → <b>" +
+        Math.floor(effStock(it) + addQty) + " " + it.unit + "</b>（+" + addQty + "）<br>" + note);
   }
   function submitCheckin() {
     var it = findItem(SH.cat);
@@ -761,9 +794,11 @@
     var price = parseFloat(p && p.value);
     if (!price || price <= 0) { toast("请填实付总价"); return; }
     var addQty = qty * best.total;
-    it.stock = Math.round((it.stock + addQty) * 100) / 100;
+    it.stock = Math.round((effStock(it) + addQty) * 100) / 100;
+    it.stockAt = iso(TODAY);
     OVR[it.cat] = OVR[it.cat] || {};
     OVR[it.cat].stock = it.stock;
+    OVR[it.cat].stockAt = it.stockAt;
     save(LS.ovr, OVR);
     var per100 = +(price / addQty * 100).toFixed(4);
     LOG.unshift({ d: iso(TODAY), cat: it.cat, unit: it.unit, qty: qty,
@@ -876,10 +911,16 @@
       var v = parseFloat(t.value);
       if (!isNaN(v) && v >= 0) {
         var f = t.dataset.f === "stock" ? "stock" : "rate";
-        var cat = DATA.items[k].cat;
-        DATA.items[k][f] = v;
+        var cat = DATA.items[k].cat, it = DATA.items[k];
+        /* 先把「此刻的真实存量」锁下来，再改参数，避免历史扣减被新参数改写 */
+        var nowStock = (f === "stock") ? v : effStock(it);
+        it.stock = nowStock;
+        it.stockAt = iso(TODAY);
+        if (f === "rate") it.rate = v;
         OVR[cat] = OVR[cat] || {};
-        OVR[cat][f] = v;
+        OVR[cat].stock = it.stock;
+        OVR[cat].stockAt = it.stockAt;
+        if (f === "rate") OVR[cat].rate = v;
         save(LS.ovr, OVR);
       }
       renderAll();
